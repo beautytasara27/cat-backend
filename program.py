@@ -3,47 +3,40 @@ import json
 
 import catsim.plot as catplot
 import matplotlib.pyplot as plt
-from catsim.irt import icc
+from catsim.irt import icc, normalize_item_bank
 from catsim.stopping import *
 from flask import Flask, request
 from flask_cors import CORS
 
 from Item import Item
 from cat import Irt
+from flask import session
 
 app = Flask(__name__)
 CORS(app)
+app.config['SECRET_KEY'] = 'your secret key'
 
-
-@app.route('/start', methods=['GET'])
+dict = {}
+@app.route('/start', methods=['POST'])
 def start():
     if not request.is_json:
         return "Content type is not supported."
-    global item_bank
-    global item_difficulties
-    global items
-    global responses
-    global est_theta
-    global responses
-    global thetas
-    global administered_items
-    global ad_items
-    global model
-    global next_item_index
+    key = session.get('key')
+    if key is None:
+        data = request.json
+        session['key'] = data.get("id")
 
     item_bank, item_difficulties = read_csv('irt_dataset.csv')
-    items = numpy.zeros((len(item_difficulties), 4))
-    items[:, 1] = item_difficulties
-    items[:, 0] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  # use catsim for normalization
-    items[:, 3] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    items = numpy.zeros((len(item_difficulties), 1))
+    items[:, 0] = item_difficulties
+    items = normalize_item_bank(items)
     model = Irt(items)
     responses = []
     est_theta = model.estimate_theta()
     thetas = [est_theta]
     next_item_index = model.next_item(est_theta)
     administered_items = []
-    ad_items = []  # in order of administration
-
+    dict[key] = [model, responses, administered_items, next_item_index, est_theta, thetas, item_bank]
     return {
 
         "itemCode": item_bank[next_item_index].itemCode,
@@ -54,20 +47,18 @@ def start():
 
 @app.route('/next', methods=['POST'])
 def next_item():
-    global est_theta
-    global next_item_index
-
     # _stop = model.stopper.stop(administered_items=items[administered_items], theta=est_theta)
     if request.is_json:
-
+        key = session.get('key')
+        model, responses, administered_items, next_item_index, est_theta, thetas, item_bank = dict[key]
         data = request.json
         score = score_question(data.get('response').lower(), item_bank[next_item_index].answer.lower())
         responses.append(score)
         thetas.append(est_theta)
         administered_items.append(next_item_index)
-        ad_items.append(items[next_item_index].tolist())
         est_theta = model.estimate_theta(administered_items, responses, est_theta)
         next_item_index = model.next_item(est_theta, administered_items)
+        dict[key] = [model, responses, administered_items, next_item_index, est_theta, thetas, item_bank]
         if next_item_index is None:
             return json.dumps(
                 {
