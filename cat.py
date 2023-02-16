@@ -1,19 +1,22 @@
-# estimation package contains different proficiency estimation methods
 from catsim.estimation import *
 from catsim.initialization import *
 from catsim.selection import *
-from catsim.stopping import *
+
+"""
+This class contains methods from the catsim package. 
+    : For estimating the participant's ability and the next item to be administered
+"""
 
 
 class Irt:
     def __init__(self, item_bank):
         self.estimator = NumericalSearchEstimator()
-        self.selector = MaxInfoSelector()
-        self.stopper = MaxItemStopper(10)
+        self.selector = UrrySelector()
         self.item_bank = item_bank
 
     def estimate_theta(self, administered_items=None, responses=None, est_theta=None):
         if administered_items is None:
+            # The fixed point initializer sets a given value as the participant's initial ability, in  this case 2.
             initializer = FixedPointInitializer(2)
             new_theta = initializer.initialize()
         else:
@@ -22,6 +25,7 @@ class Irt:
         return new_theta
 
     def next_item(self, est_theta, administered_items=None):
+        # always return the first item in the itemBank as the first question to be administered to the participant
         if administered_items is None:
             return 0
         else:
