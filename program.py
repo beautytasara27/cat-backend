@@ -2,15 +2,16 @@
    : It runs on Flask
 """
 import csv
-import json
+
 from catsim.irt import normalize_item_bank
 from catsim.stopping import *
 from flask import Flask, request, session
-from flask_session import Session
 from flask_cors import CORS, cross_origin
+from flask import json
 from Item import Item
 from cat import Irt
-
+from flask_session import Session
+from werkzeug.exceptions import HTTPException
 app = Flask(__name__)
 CORS(app)
 app.config['SECRET_KEY'] = 'your secret key'
@@ -22,6 +23,23 @@ The session is used to store user specific variables during the test which will 
 """
 
 """
+This is a generic handler for HTTP errors, it returns readable errors in json format
+"""
+@app.errorhandler(HTTPException)
+def handle_exception(e):
+    # start with the correct headers and status code from the error
+    response = e.get_response()
+    # replace the body with JSON
+    response.data = json.dumps({
+        "code": e.code,
+        "name": e.name,
+        "description": e.description,
+    })
+    response.content_type = "application/json"
+    return response
+
+
+"""
     The endpoint for starting the Test, 
     : It accepts json type content, and the body contains the identifier of the participant e.g.
     : {
@@ -31,15 +49,14 @@ The session is used to store user specific variables during the test which will 
 """
 
 
-@app.route('/start', methods=['POST'])
+@app.route('/api/v1/start', methods=['GET'])
 @cross_origin(supports_credentials=True)
 def start():
     if not request.is_json:
         return "Content type is not supported."
     key = session.get('key')
     if key is None:
-        data = request.json
-        session['key'] = data.get("id")
+        session['key'] = request.args.get("id")
         key = session.get('key')
     item_bank, item_difficulties = read_csv('irt_dataset.csv')
     items = numpy.zeros((len(item_difficulties), 1))
@@ -72,7 +89,7 @@ def start():
 """
 
 
-@app.route('/next', methods=['POST'])
+@app.route('/api/v1/next', methods=['POST'])
 @cross_origin(supports_credentials=True)
 def next_item():
     if request.is_json:
@@ -95,26 +112,23 @@ def next_item():
         # criteria for ending the text, after all the items are completed or after a set number of questions
         if next_item_index is None or len(administered_items) == 10:
             # calculate the final proficiency of the participant
-            proficiency = estimate_proficiency(est_theta, administered_items, item_bank)
+            proficiency = estimate_proficiency(est_theta, administered_items)
             write_csv([key, *responses])
-            return json.dumps(
-                {
-                    "complete": 1,
-                    "message": "Test Completed!",
-                    "theta": est_theta,
-                    "responses": responses,
-                    "proficiency": proficiency
-
-                }
-            )
+            return {
+                "complete": 1,
+                "message": "Test Completed!",
+                "theta": est_theta,
+                "responses": responses,
+                "proficiency": proficiency
+            }
         # if there are still other questions to be administered return this
-        return json.dumps({"complete": 0,
-                           "data": {
-                               "itemCode": item_bank[next_item_index].itemCode,
-                               "question": item_bank[next_item_index].question,
-                               "options": item_bank[next_item_index].options
-                           }
-                           })
+        return {"complete": 0,
+                "data": {
+                    "itemCode": item_bank[next_item_index].itemCode,
+                    "question": item_bank[next_item_index].question,
+                    "options": item_bank[next_item_index].options
+                }
+                }
     else:
         return "Content type is not supported."
 
@@ -164,17 +178,17 @@ def score_question(response, answer):
 """
     This is the function that estimates a participant's final ability,
     : The ability is in the range (-4 < x < 4)
-    : The boundaries can be any values
+    : The boundaries can be any values, the higher the ability, the better the examinee's proficiency
 """
 
 
-def estimate_proficiency(est_theta, administered_items, item_bank):
+def estimate_proficiency(est_theta, administered_items, lower=1, upper=2):
     assert administered_items is not None
-    if est_theta < 1:
+    if est_theta < lower:
         return "Novice"
-    elif 1 < est_theta < 2:
+    elif lower < est_theta < upper:
         return "Proficient"
-    elif est_theta > 2:
+    elif est_theta > upper:
         return "Expert"
 
 
